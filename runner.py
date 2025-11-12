@@ -636,7 +636,6 @@ def main():
             print(f"Loaded whitelist for {args.whitelist_repo} from {args.whitelist}")
 
     # Auto-load whitelists if they exist
-    from pathlib import Path
     if Path("liger_kernel_whitelist.txt").exists() and "liger_kernel" in repos:
         whitelist = runner_temp.load_whitelist("liger_kernel_whitelist.txt", "liger_kernel")
         if whitelist and "liger_kernel" not in whitelists:
