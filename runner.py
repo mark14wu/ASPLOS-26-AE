@@ -27,7 +27,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "1",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "1"
         },
-        "command_prefix": ""
+        "command_prefix": "/usr/bin/time -v"
     }),
     ("baseline_no_compile_with_cache", {
         "group": "baseline",
@@ -37,7 +37,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "0",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "0"
         },
-        "command_prefix": ""
+        "command_prefix": "/usr/bin/time -v"
     }),
     ("baseline_compile_with_cache", {
         "group": "baseline",
@@ -47,7 +47,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "1",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "0"
         },
-        "command_prefix": ""
+        "command_prefix": "/usr/bin/time -v"
     }),
     ("baseline_no_compile_no_cache", {
         "group": "baseline",
@@ -57,7 +57,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "0",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "1"
         },
-        "command_prefix": ""
+        "command_prefix": "/usr/bin/time -v"
     }),
     # Compute-sanitizer configurations
     ("compute_sanitizer_compile_no_cache", {
@@ -109,7 +109,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "1",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "1"
         },
-        "command_prefix": "triton-sanitizer"
+        "command_prefix": "/usr/bin/time -v triton-sanitizer"
     }),
     ("triton_sanitizer_no_compile_with_cache", {
         "group": "triton_sanitizer",
@@ -119,7 +119,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "0",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "0"
         },
-        "command_prefix": "triton-sanitizer"
+        "command_prefix": "/usr/bin/time -v triton-sanitizer"
     }),
     ("triton_sanitizer_compile_with_cache", {
         "group": "triton_sanitizer",
@@ -129,7 +129,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "1",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "0"
         },
-        "command_prefix": "triton-sanitizer"
+        "command_prefix": "/usr/bin/time -v triton-sanitizer"
     }),
     ("triton_sanitizer_no_compile_no_cache", {
         "group": "triton_sanitizer",
@@ -139,7 +139,7 @@ ENV_CONFIGS = OrderedDict([
             "TRITON_ALWAYS_COMPILE": "0",
             "PYTORCH_NO_CUDA_MEMORY_CACHING": "1"
         },
-        "command_prefix": "triton-sanitizer"
+        "command_prefix": "/usr/bin/time -v triton-sanitizer"
     }),
     # Kernel timing configurations for pytest-based repos (Liger-Kernel, FlagGems)
     ("kernel_time_baseline", {

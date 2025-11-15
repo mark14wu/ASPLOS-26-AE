@@ -83,42 +83,43 @@ echo "========================================"
 echo "Test Runs Complete"
 echo "========================================"
 echo ""
-
-if [ $TEST_EXIT_CODE -eq 0 ]; then
-    echo "✓ All tests completed successfully"
-else
-    echo "⚠ Some tests failed or were interrupted"
-fi
-
+echo "Test execution completed. Check the summary below for individual test results."
 echo ""
-echo "Results directory: ${OUTPUT_BASE}/"
+echo "Results saved in: ${OUTPUT_BASE}/"
 echo ""
 
-# Find CSV results
-csv_file=$(find "${OUTPUT_BASE}" -name "results_*.csv" | head -1)
+# Run analysis script and generate CSV
+echo "========================================"
+echo "Analyzing Results and Generating CSV"
+echo "========================================"
+echo ""
 
-if [ -f "$csv_file" ]; then
-    echo "CSV Results: ${csv_file}"
+python3 analyze_ablation_kernel_time.py "${OUTPUT_BASE}" --csv "ablation_kernel_timing_results.csv"
+
+ANALYSIS_EXIT_CODE=$?
+
+if [ ${ANALYSIS_EXIT_CODE} -eq 0 ]; then
     echo ""
-    echo "To view the results:"
-    echo "  cat ${csv_file}"
+    echo "========================================"
+    echo "Analysis Complete!"
+    echo "========================================"
+    echo ""
+    echo "Results:"
+    echo "  CSV File:  ${OUTPUT_BASE}/ablation_kernel_timing_results.csv (ordered by test number)"
+    echo "  Log files: ${OUTPUT_BASE}/ablation_studies/*/"
+    echo ""
+    echo "To view CSV:"
+    echo "  cat ${OUTPUT_BASE}/ablation_kernel_timing_results.csv"
     echo "  or"
-    echo "  column -t -s, ${csv_file} | less -S"
+    echo "  column -t -s, ${OUTPUT_BASE}/ablation_kernel_timing_results.csv | less -S"
     echo ""
-
-    # Show column headers
-    echo "CSV Columns:"
-    head -1 "$csv_file"
-    echo ""
-
-    # Count results
-    total_tests=$(tail -n +2 "$csv_file" | wc -l)
-    echo "Total test results: ${total_tests}"
 else
-    echo "⚠ No CSV file found"
+    echo ""
+    echo "⚠ Analysis script failed, but test logs are still available in ${OUTPUT_BASE}/"
+    echo ""
 fi
 
-echo ""
 echo "========================================"
 
-exit $TEST_EXIT_CODE
+# Exit with analysis status (tests always succeed in runner.py)
+exit ${ANALYSIS_EXIT_CODE}
