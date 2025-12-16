@@ -24,6 +24,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.test_registry import REPO_CONFIGS, get_configs_by_group
+from utils.misc import EASTERN_TZ
 
 # Get baseline configurations from registry
 ENV_CONFIGS = get_configs_by_group("baseline")
@@ -38,7 +39,7 @@ class AddressSanitizerRunner:
         self.project_root = self.script_dir.parent
         self.output_base_dir = self.script_dir / "results" / "address_sanitizer"
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.timestamp = datetime.now(EASTERN_TZ).strftime("%Y%m%d_%H%M%S")
         self.global_test_counter = 0
         self.total_tests = 0
         self.test_results = OrderedDict()
@@ -207,6 +208,11 @@ class AddressSanitizerRunner:
 
         # Enable Address Sanitizer
         env["TRITON_ENABLE_ASAN"] = "1"
+        env["HSA_XNACK"] = "1"
+
+        # Convert CUDA to HIP memory caching env var for AMD
+        if "PYTORCH_NO_CUDA_MEMORY_CACHING" in env:
+            env["PYTORCH_NO_HIP_MEMORY_CACHING"] = env.pop("PYTORCH_NO_CUDA_MEMORY_CACHING")
 
         # Add project root to PYTHONPATH
         if "PYTHONPATH" in env:
@@ -244,8 +250,9 @@ class AddressSanitizerRunner:
                 log_file.write(f"Test: {test_info['test_name']}\n")
                 log_file.write(f"Environment: {env_config_key}\n")
                 log_file.write(f"TRITON_ENABLE_ASAN: 1\n")
+                log_file.write(f"HSA_XNACK: 1\n")
                 log_file.write(f"Command: {' '.join(cmd)}\n")
-                log_file.write(f"Start Time: {datetime.now().isoformat()}\n")
+                log_file.write(f"Start Time: {datetime.now(EASTERN_TZ).isoformat()}\n")
                 log_file.write("=" * 80 + "\n")
                 log_file.flush()
 
@@ -276,7 +283,7 @@ class AddressSanitizerRunner:
 
         with open(output_file, "a") as log_file:
             log_file.write("\n" + "=" * 80 + "\n")
-            log_file.write(f"End Time: {datetime.now().isoformat()}\n")
+            log_file.write(f"End Time: {datetime.now(EASTERN_TZ).isoformat()}\n")
             log_file.write(f"Elapsed Time: {elapsed_time:.4f} seconds\n")
             log_file.write(f"Status: {status}\n")
             if error_msg:
@@ -409,6 +416,7 @@ def main():
     print("=" * 60)
     print("Running Address Sanitizer End-to-End Experiments")
     print("TRITON_ENABLE_ASAN: 1")
+    print("HSA_XNACK: 1")
     if args.memory:
         print("Memory profiling: ENABLED")
     print("=" * 60)

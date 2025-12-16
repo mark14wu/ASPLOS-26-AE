@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Run baseline end-to-end experiments for all repositories.
-Results are saved to end_to_end/results/baseline/
+Run baseline end-to-end experiments for all repositories on AMD GPUs.
+Results are saved to end_to_end/results/baseline_amd/
+
+This script is similar to run_baseline.py but uses PYTORCH_NO_HIP_MEMORY_CACHING
+instead of PYTORCH_NO_CUDA_MEMORY_CACHING for AMD/ROCm compatibility.
 """
 
 import os
@@ -30,11 +33,11 @@ ENV_CONFIGS = get_configs_by_group("baseline")
 MEMORY_PROFILE_PREFIX = "/usr/bin/time -v"
 
 
-class BaselineRunner:
+class BaselineAMDRunner:
     def __init__(self, enable_memory=False):
         self.script_dir = Path(__file__).parent.absolute()
         self.project_root = self.script_dir.parent
-        self.output_base_dir = self.script_dir / "results" / "baseline"
+        self.output_base_dir = self.script_dir / "results" / "baseline_amd"
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self.timestamp = datetime.now(EASTERN_TZ).strftime("%Y%m%d_%H%M%S")
         self.global_test_counter = 0
@@ -203,6 +206,10 @@ class BaselineRunner:
         env = os.environ.copy()
         env.update(env_config["env"])
 
+        # Convert CUDA to HIP memory caching env var for AMD
+        if "PYTORCH_NO_CUDA_MEMORY_CACHING" in env:
+            env["PYTORCH_NO_HIP_MEMORY_CACHING"] = env.pop("PYTORCH_NO_CUDA_MEMORY_CACHING")
+
         # Add project root to PYTHONPATH
         if "PYTHONPATH" in env:
             env["PYTHONPATH"] = f"{self.project_root}:{env['PYTHONPATH']}"
@@ -304,7 +311,7 @@ class BaselineRunner:
                 "test_function": test_info["test_function"] or ""
             }
 
-        print(f"\nRunning tests with {len(ENV_CONFIGS)} baseline configurations")
+        print(f"\nRunning tests with {len(ENV_CONFIGS)} baseline configurations (AMD)")
         print("=" * 60)
 
         for env_key, env_config in ENV_CONFIGS.items():
@@ -355,7 +362,7 @@ class BaselineRunner:
     def print_summary(self):
         """Print a summary of test results."""
         print("\n" + "=" * 60)
-        print("BASELINE TEST SUMMARY")
+        print("BASELINE AMD TEST SUMMARY")
         print("=" * 60)
 
         for env_key in ENV_CONFIGS.keys():
@@ -392,7 +399,7 @@ class BaselineRunner:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run baseline end-to-end experiments")
+    parser = argparse.ArgumentParser(description="Run baseline end-to-end experiments on AMD GPUs")
     parser.add_argument(
         "--memory",
         action="store_true",
@@ -401,13 +408,14 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Running Baseline End-to-End Experiments")
+    print("Running Baseline End-to-End Experiments (AMD)")
+    print("Using PYTORCH_NO_HIP_MEMORY_CACHING for ROCm")
     if args.memory:
         print("Memory profiling: ENABLED")
     print("=" * 60)
     print()
 
-    runner = BaselineRunner(enable_memory=args.memory)
+    runner = BaselineAMDRunner(enable_memory=args.memory)
 
     # Auto-load whitelists
     whitelists = {}
@@ -429,7 +437,7 @@ def main():
     runner.print_summary()
 
     print("\n" + "=" * 60)
-    print("Baseline experiments completed!")
+    print("Baseline AMD experiments completed!")
     print(f"Results saved in: {runner.output_base_dir}")
     print("=" * 60)
 
