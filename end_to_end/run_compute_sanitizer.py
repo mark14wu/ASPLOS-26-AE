@@ -1,53 +1,79 @@
 #!/usr/bin/env python3
 """
-Test runner for Liger-Kernel, FlagGems, and TritonBench repositories.
-Version 3: Added whitelist support for selective test execution.
+Run compute-sanitizer end-to-end experiments for all repositories.
+Results are saved to end_to_end/results/compute_sanitizer/
 """
 
 import os
 import subprocess
-import json
 import time
+import ast
+import csv
+import sys
+import shutil
+import argparse
 from pathlib import Path
 from datetime import datetime
-import sys
-import argparse
-import csv
-import ast
 from collections import OrderedDict
 
-from utils.test_registry import ENV_CONFIGS, REPO_CONFIGS, get_configs_by_group
+# Add project root to path for imports
+SCRIPT_DIR = Path(__file__).parent.absolute()
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-class TestRunner:
-    def __init__(self, output_base_dir="test_outputs"):
-        self.output_base_dir = Path(output_base_dir)
-        self.output_base_dir.mkdir(exist_ok=True)
+from utils.test_registry import REPO_CONFIGS, get_configs_by_group
+
+# Get compute-sanitizer configurations from registry
+ENV_CONFIGS = get_configs_by_group("compute_sanitizer")
+
+# Memory profiling prefix
+MEMORY_PROFILE_PREFIX = "/usr/bin/time -v"
+
+
+class ComputeSanitizerRunner:
+    def __init__(self, enable_memory=False):
+        self.script_dir = Path(__file__).parent.absolute()
+        self.project_root = self.script_dir.parent
+        self.output_base_dir = self.script_dir / "results" / "compute_sanitizer"
+        self.output_base_dir.mkdir(parents=True, exist_ok=True)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.global_test_counter = 0
         self.total_tests = 0
         self.test_results = OrderedDict()
         self.test_list = []
+        self.enable_memory = enable_memory
+
+    def check_compute_sanitizer(self):
+        """Check if compute-sanitizer is available."""
+        if shutil.which("compute-sanitizer") is None:
+            print("Warning: compute-sanitizer not found in PATH")
+            print("Make sure NVIDIA CUDA Toolkit is installed and compute-sanitizer is available")
+            response = input("Continue? (y/n): ").strip().lower()
+            if response != 'y':
+                print("Aborted.")
+                return False
+        return True
 
     def load_whitelist(self, whitelist_file, repo_name):
         """Load test whitelist from file."""
         whitelist = {}
+        whitelist_path = self.project_root / whitelist_file
 
-        if not Path(whitelist_file).exists():
+        if not whitelist_path.exists():
             return None
 
-        with open(whitelist_file, "r") as f:
+        with open(whitelist_path, "r") as f:
             lines = f.readlines()
 
         for line in lines:
             line = line.strip()
             if line and not line.startswith("#"):
                 if repo_name == "tritonbench":
-                    # TritonBench whitelist is just file names
-                    file_name = Path(line).stem  # Remove .py extension
-                    whitelist[file_name] = []  # Empty list means run the whole file
+                    file_name = Path(line).stem
+                    whitelist[file_name] = []
                 elif "::" in line:
                     test_file, test_function = line.split("::")
-                    test_file = Path(test_file).stem  # Remove .py extension
+                    test_file = Path(test_file).stem
                     if test_file not in whitelist:
                         whitelist[test_file] = []
                     whitelist[test_file].append(test_function)
@@ -74,7 +100,7 @@ class TestRunner:
     def discover_tests(self, repo_name):
         """Discover test files in a repository."""
         config = REPO_CONFIGS[repo_name]
-        test_dir = Path(config["test_dir"])
+        test_dir = self.project_root / config["test_dir"]
 
         if not test_dir.exists():
             print(f"Warning: Test directory {test_dir} does not exist for {repo_name}")
@@ -116,10 +142,8 @@ class TestRunner:
             for test_file in test_files:
                 test_file_stem = test_file.stem
 
-                # Check if this file is in whitelist
                 if whitelist and test_file_stem in whitelist:
                     if repo == "tritonbench":
-                        # TritonBench whitelist - run whole file
                         self.test_list.append({
                             "repository": repo,
                             "test_file": test_file,
@@ -127,7 +151,6 @@ class TestRunner:
                             "test_name": f"{repo}/{test_file_stem}"
                         })
                     else:
-                        # pytest-based whitelist - run specific functions
                         for test_function in whitelist[test_file_stem]:
                             self.test_list.append({
                                 "repository": repo,
@@ -136,10 +159,8 @@ class TestRunner:
                                 "test_name": f"{repo}/{test_file_stem}/{test_function}"
                             })
                 elif whitelist and repo == "tritonbench":
-                    # Skip files not in whitelist for TritonBench
                     continue
                 elif not whitelist and repo in ["liger_kernel", "flag_gems"]:
-                    # No whitelist, discover all functions
                     test_functions = self.discover_test_functions(test_file)
 
                     if test_functions:
@@ -158,7 +179,6 @@ class TestRunner:
                             "test_name": f"{repo}/{test_file_stem}"
                         })
                 elif not whitelist:
-                    # TritonBench or no whitelist - run whole files
                     self.test_list.append({
                         "repository": repo,
                         "test_file": test_file,
@@ -181,7 +201,7 @@ class TestRunner:
         self.global_test_counter += 1
         test_number = str(self.global_test_counter).zfill(len(str(self.total_tests)))
 
-        output_dir = self.output_base_dir / env_config["group"] / env_config["name"]
+        output_dir = self.output_base_dir / env_config["name"]
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if test_function:
@@ -194,40 +214,28 @@ class TestRunner:
         env = os.environ.copy()
         env.update(env_config["env"])
 
-        # Add base directory to PYTHONPATH for pytest plugin
-        base_dir = str(Path(__file__).parent.absolute())
+        # Add project root to PYTHONPATH
         if "PYTHONPATH" in env:
-            env["PYTHONPATH"] = f"{base_dir}:{env['PYTHONPATH']}"
+            env["PYTHONPATH"] = f"{self.project_root}:{env['PYTHONPATH']}"
         else:
-            env["PYTHONPATH"] = base_dir
+            env["PYTHONPATH"] = str(self.project_root)
+
+        test_dir = self.project_root / config["test_dir"]
 
         if repo_name == "tritonbench" and config.get("special_handling"):
-            # Use relative path from test_dir for tritonbench
-            relative_path = test_file.relative_to(Path(config["test_dir"]))
-            # Check if profiler should be enabled based on environment variable
-            if env.get("ENABLE_TRITON_PROFILER") == "1":
-                # Use wrapper script to enable profiling
-                wrapper_script = Path(__file__).parent / "tritonbench_profiler_wrapper.py"
-                cmd = ["python", str(wrapper_script), str(relative_path)]
-            else:
-                cmd = ["python", str(relative_path)]
+            relative_path = test_file.relative_to(self.project_root / config["test_dir"])
+            cmd = ["python", str(relative_path)]
         else:
-            # For pytest-based tests (Liger-Kernel, FlagGems)
             if test_function:
                 cmd = ["pytest", "-s", "--assert=plain", f"{test_file.name}::{test_function}"]
             else:
                 cmd = config["test_command"].split() + [test_file.name]
 
-            # Add pytest plugin for Triton profiling if enabled
-            if env.get("ENABLE_TRITON_PROFILER") == "1" and "pytest" in cmd[0]:
-                # Insert the plugin option after pytest command
-                plugin_path = Path(__file__).parent / "pytest_triton_profiler.py"
-                cmd.insert(1, "-p")
-                cmd.insert(2, "pytest_triton_profiler")
-
-        command_prefix = env_config.get("command_prefix", "")
-        if command_prefix:
-            cmd = command_prefix.split() + cmd
+        # Always use compute-sanitizer prefix, optionally add memory profiling
+        command_prefix = "compute-sanitizer"
+        if self.enable_memory:
+            command_prefix = f"{MEMORY_PROFILE_PREFIX} {command_prefix}"
+        cmd = command_prefix.split() + cmd
 
         if test_function:
             test_display = f"{test_file.name}::{test_function}"
@@ -235,8 +243,6 @@ class TestRunner:
             test_display = test_file.name
 
         print(f"  [{self.global_test_counter}/{self.total_tests}] [{repo_name}] Running: {test_display}")
-        if command_prefix:
-            print(f"    Prefix: {command_prefix}")
 
         start_time = time.time()
 
@@ -253,7 +259,7 @@ class TestRunner:
                 result = subprocess.run(
                     cmd,
                     env=env,
-                    cwd=config["test_dir"],
+                    cwd=test_dir,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     timeout=300,
@@ -269,13 +275,11 @@ class TestRunner:
             elapsed_time = time.time() - start_time
             status = "TIMEOUT"
             error_msg = "Test exceeded 5 minute timeout"
-            success = False
 
         except Exception as e:
             elapsed_time = time.time() - start_time
             status = "ERROR"
             error_msg = str(e)
-            success = False
 
         with open(output_file, "a") as log_file:
             log_file.write("\n" + "=" * 80 + "\n")
@@ -297,8 +301,8 @@ class TestRunner:
             "output_file": str(output_file)
         }
 
-    def run_all_tests(self, repositories, config_groups, whitelists=None):
-        """Run all tests with selected environment configurations."""
+    def run_all_tests(self, repositories, whitelists=None):
+        """Run all tests with compute-sanitizer configurations."""
         self.prepare_test_list(repositories, whitelists)
 
         if not self.test_list:
@@ -313,20 +317,10 @@ class TestRunner:
                 "test_function": test_info["test_function"] or ""
             }
 
-        selected_configs = OrderedDict()
-        for group in config_groups:
-            if group == "all":
-                selected_configs = ENV_CONFIGS
-                break
-            else:
-                for key, config in ENV_CONFIGS.items():
-                    if config["group"] == group:
-                        selected_configs[key] = config
-
-        print(f"\nRunning tests with {len(selected_configs)} configurations")
+        print(f"\nRunning tests with {len(ENV_CONFIGS)} compute-sanitizer configurations")
         print("=" * 60)
 
-        for env_key, env_config in selected_configs.items():
+        for env_key, env_config in ENV_CONFIGS.items():
             print(f"\nConfiguration: [{env_key}] {env_config['description']}")
             print("-" * 50)
 
@@ -374,7 +368,7 @@ class TestRunner:
     def print_summary(self):
         """Print a summary of test results."""
         print("\n" + "=" * 60)
-        print("TEST SUMMARY")
+        print("COMPUTE-SANITIZER TEST SUMMARY")
         print("=" * 60)
 
         for env_key in ENV_CONFIGS.keys():
@@ -409,138 +403,53 @@ class TestRunner:
                     print(f"  Error: {error}")
                 print(f"  Total Time: {total_time:.2f}s")
 
-def main():
-    parser = argparse.ArgumentParser(description="Run tests for Triton repositories")
-    parser.add_argument(
-        "--repos",
-        nargs="+",
-        choices=["liger_kernel", "flag_gems", "tritonbench", "all"],
-        default=["all"],
-        help="Repositories to test"
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="test_outputs",
-        help="Base directory for test outputs"
-    )
-    parser.add_argument(
-        "--config-groups",
-        nargs="+",
-        choices=["baseline", "compute_sanitizer", "triton_sanitizer", "kernel_time", "kernel_time_liger_kernel", "kernel_time_tritonbench", "ablation_studies", "all"],
-        default=["baseline"],
-        help="Configuration groups to run"
-    )
-    parser.add_argument(
-        "--whitelist",
-        help="Whitelist file for specific tests (e.g., flag_gems_whitelist.txt)"
-    )
-    parser.add_argument(
-        "--whitelist-repo",
-        help="Repository to apply whitelist to (e.g., flag_gems)"
-    )
-    parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Clean all generated test output directories"
-    )
-    parser.add_argument(
-        "--clean-pattern",
-        default="test_outputs*",
-        help="Pattern for directories to clean (default: test_outputs*)"
-    )
 
+def main():
+    parser = argparse.ArgumentParser(description="Run compute-sanitizer end-to-end experiments")
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Enable memory profiling with /usr/bin/time -v"
+    )
     args = parser.parse_args()
 
-    # Handle cleanup first
-    if args.clean:
-        import glob
-        import shutil
+    print("=" * 60)
+    print("Running Compute-Sanitizer End-to-End Experiments")
+    if args.memory:
+        print("Memory profiling: ENABLED")
+    print("=" * 60)
+    print()
 
-        print("Cleaning generated files...")
-        print("=" * 60)
+    runner = ComputeSanitizerRunner(enable_memory=args.memory)
 
-        # Find all directories matching the pattern
-        dirs_to_remove = glob.glob(args.clean_pattern)
+    # Check if compute-sanitizer is available
+    if not runner.check_compute_sanitizer():
+        return
 
-        if not dirs_to_remove:
-            print(f"No directories found matching pattern: {args.clean_pattern}")
-        else:
-            print(f"Found {len(dirs_to_remove)} directories to remove:")
-            for dir_path in sorted(dirs_to_remove):
-                print(f"  - {dir_path}")
-
-            print("\nAre you sure you want to delete these directories? (y/n)")
-            response = input().strip().lower()
-
-            if response == 'y':
-                removed_count = 0
-                for dir_path in dirs_to_remove:
-                    try:
-                        if Path(dir_path).is_dir():
-                            shutil.rmtree(dir_path)
-                            print(f"  ✓ Removed: {dir_path}")
-                            removed_count += 1
-                    except Exception as e:
-                        print(f"  ✗ Error removing {dir_path}: {e}")
-
-                print(f"\n✓ Cleanup complete! Removed {removed_count} directories.")
-            else:
-                print("Cleanup cancelled.")
-
-        print("=" * 60)
-        sys.exit(0)
-
-    if "all" in args.repos:
-        repos = list(REPO_CONFIGS.keys())
-    else:
-        repos = args.repos
-
-    if "all" in args.config_groups:
-        config_groups = ["baseline", "compute_sanitizer", "triton_sanitizer"]
-    else:
-        config_groups = args.config_groups
-
-    # Load whitelist if specified
+    # Auto-load whitelists
     whitelists = {}
-    runner_temp = TestRunner()
+    repos = list(REPO_CONFIGS.keys())
 
-    if args.whitelist and args.whitelist_repo:
-        whitelist = runner_temp.load_whitelist(args.whitelist, args.whitelist_repo)
+    for repo in repos:
+        whitelist_file = f"utils/{repo}_whitelist.txt"
+        whitelist = runner.load_whitelist(whitelist_file, repo)
         if whitelist:
-            whitelists[args.whitelist_repo] = whitelist
-            print(f"Loaded whitelist for {args.whitelist_repo} from {args.whitelist}")
+            whitelists[repo] = whitelist
+            print(f"Loaded whitelist for {repo}")
 
-    # Auto-load whitelists if they exist
-    if Path("utils/liger_kernel_whitelist.txt").exists() and "liger_kernel" in repos:
-        whitelist = runner_temp.load_whitelist("utils/liger_kernel_whitelist.txt", "liger_kernel")
-        if whitelist and "liger_kernel" not in whitelists:
-            whitelists["liger_kernel"] = whitelist
-            print(f"Auto-loaded whitelist for liger_kernel (27 tests)")
-
-    if Path("utils/flag_gems_whitelist.txt").exists() and "flag_gems" in repos:
-        whitelist = runner_temp.load_whitelist("utils/flag_gems_whitelist.txt", "flag_gems")
-        if whitelist and "flag_gems" not in whitelists:
-            whitelists["flag_gems"] = whitelist
-            print(f"Auto-loaded whitelist for flag_gems (20 tests)")
-
-    if Path("utils/tritonbench_whitelist.txt").exists() and "tritonbench" in repos:
-        whitelist = runner_temp.load_whitelist("utils/tritonbench_whitelist.txt", "tritonbench")
-        if whitelist and "tritonbench" not in whitelists:
-            whitelists["tritonbench"] = whitelist
-            print(f"Auto-loaded whitelist for tritonbench (64 files)")
-
-    runner = TestRunner(output_base_dir=args.output_dir)
-
-    print(f"Starting test run")
-    print(f"Output directory: {args.output_dir}")
+    print(f"\nOutput directory: {runner.output_base_dir}")
     print(f"Repositories: {', '.join(repos)}")
-    print(f"Configuration groups: {', '.join(config_groups)}")
-    if whitelists:
-        print(f"Using whitelist for: {', '.join(whitelists.keys())}")
+    print()
 
-    runner.run_all_tests(repos, config_groups, whitelists)
+    runner.run_all_tests(repos, whitelists)
     runner.save_results_csv()
     runner.print_summary()
+
+    print("\n" + "=" * 60)
+    print("Compute-sanitizer experiments completed!")
+    print(f"Results saved in: {runner.output_base_dir}")
+    print("=" * 60)
+
 
 if __name__ == "__main__":
     main()
