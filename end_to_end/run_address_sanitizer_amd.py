@@ -444,12 +444,32 @@ class AddressSanitizerRunner:
             "output_file": str(output_file)
         }
 
-    def run_all_tests(self, repositories, whitelists=None):
-        """Run all tests with address sanitizer configurations."""
+    def run_all_tests(self, repositories, whitelists=None, test_ids=None):
+        """Run all tests with address sanitizer configurations.
+
+        Args:
+            repositories: List of repository names to test
+            whitelists: Optional dict of whitelists per repository
+            test_ids: Optional set of test IDs to run (filters test list)
+        """
         self.prepare_test_list(repositories, whitelists)
 
         if not self.test_list:
             print("No tests found to run")
+            return
+
+        # Filter by test IDs if specified
+        if test_ids:
+            filtered_list = []
+            for test_info in self.test_list:
+                test_id = get_test_id(test_info["test_name"])
+                if test_id in test_ids:
+                    filtered_list.append(test_info)
+            self.test_list = filtered_list
+            print(f"Filtered to {len(self.test_list)} tests by ID: {sorted(test_ids)}")
+
+        if not self.test_list:
+            print("No tests match the specified IDs")
             return
 
         for test_info in self.test_list:
@@ -545,6 +565,31 @@ class AddressSanitizerRunner:
                 print(f"  Total Time: {total_time:.2f}s")
 
 
+def parse_test_ids(test_ids_str: str) -> set:
+    """Parse test IDs string into a set of integers.
+
+    Supports formats:
+    - '1,2,3' -> {1, 2, 3}
+    - '1-5' -> {1, 2, 3, 4, 5}
+    - '1,2,5-8,10' -> {1, 2, 5, 6, 7, 8, 10}
+
+    Args:
+        test_ids_str: Comma-separated test IDs, may include ranges with '-'
+
+    Returns:
+        Set of test IDs
+    """
+    result = set()
+    for part in test_ids_str.split(','):
+        part = part.strip()
+        if '-' in part:
+            start, end = part.split('-', 1)
+            result.update(range(int(start), int(end) + 1))
+        else:
+            result.add(int(part))
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run address sanitizer end-to-end experiments")
     parser.add_argument(
@@ -552,7 +597,24 @@ def main():
         action="store_true",
         help="Enable memory profiling with /usr/bin/time -v"
     )
+    parser.add_argument(
+        "--repo",
+        type=str,
+        choices=["liger_kernel", "flag_gems", "tritonbench", "all"],
+        default="all",
+        help="Repository to test (default: all). Ignored if --test-ids is specified."
+    )
+    parser.add_argument(
+        "--test-ids",
+        type=str,
+        default=None,
+        help="Run only specific test IDs (e.g., '1,2,3' or '1-10'). Overrides --repo."
+    )
     args = parser.parse_args()
+
+    # --test-ids overrides --repo
+    if args.test_ids and args.repo != "all":
+        print(f"Note: --test-ids specified, ignoring --repo={args.repo}")
 
     print("=" * 60)
     print("Running Address Sanitizer End-to-End Experiments")
@@ -569,9 +631,17 @@ def main():
 
     runner = AddressSanitizerRunner(enable_memory=args.memory)
 
+    # Determine which repos to use
+    # --test-ids uses all repos; otherwise use --repo
+    if args.test_ids:
+        repos = list(REPO_CONFIGS.keys())
+    elif args.repo == "all":
+        repos = list(REPO_CONFIGS.keys())
+    else:
+        repos = [args.repo]
+
     # Auto-load whitelists
     whitelists = {}
-    repos = list(REPO_CONFIGS.keys())
 
     for repo in repos:
         whitelist_file = f"utils/{repo}_whitelist.txt"
@@ -582,9 +652,15 @@ def main():
 
     print(f"\nOutput directory: {runner.output_base_dir}")
     print(f"Repositories: {', '.join(repos)}")
+
+    # Parse test IDs if specified
+    test_ids = None
+    if args.test_ids:
+        test_ids = parse_test_ids(args.test_ids)
+        print(f"Running only test IDs: {sorted(test_ids)}")
     print()
 
-    runner.run_all_tests(repos, whitelists)
+    runner.run_all_tests(repos, whitelists, test_ids=test_ids)
     runner.save_results_csv()
     runner.print_summary()
 
