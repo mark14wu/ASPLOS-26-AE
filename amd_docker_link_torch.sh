@@ -37,9 +37,14 @@ for pkg in "${PACKAGES[@]}"; do
     fi
 done
 
-# Link dist-info directories
+# Link dist-info directories (exclude triton)
 for dist_info in "$SYSTEM_PACKAGES"/*torch*.dist-info; do
     if [ -e "$dist_info" ]; then
+        # Skip pytorch_triton_rocm
+        if [[ "$(basename "$dist_info")" == *triton* ]]; then
+            echo "Skipped: $(basename "$dist_info")"
+            continue
+        fi
         ln -sf "$dist_info" .
         echo "Linked: $(basename "$dist_info")"
     fi
