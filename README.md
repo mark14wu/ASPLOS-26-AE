@@ -39,6 +39,16 @@ uv sync --no-install-package torch --extra rocm
 source .venv/bin/activate
 ```
 
+### Test Address Sanitizer
+
+To verify the address sanitizer is correctly installed, run:
+
+```bash
+python test_asan.py
+```
+
+This test intentionally triggers an out-of-bounds access. If ASAN is working correctly, it will detect and report the memory violation.
+
 ### CUDA Environment
 
 ```bash
