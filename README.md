@@ -8,6 +8,12 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
+### Clone submodules
+
+```bash
+git submodule init && git submodule update
+```
+
 ### AMD Docker Environment
 
 Start the Docker container:
