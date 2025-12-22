@@ -14,6 +14,9 @@ import ast
 import csv
 import sys
 import argparse
+import resource
+import atexit
+import shutil
 from pathlib import Path
 from datetime import datetime
 from collections import OrderedDict
@@ -31,6 +34,136 @@ ENV_CONFIGS = get_configs_by_group("baseline")
 
 # Memory profiling prefix
 MEMORY_PROFILE_PREFIX = "/usr/bin/time -v"
+
+# Global variable for cleanup
+_TORCH_PATH = None
+_LIBAMDHIP_MOVED = False
+
+
+def _find_path(base_dir, pattern, use_printf_h=True):
+    """Find a file/directory using find command."""
+    if use_printf_h:
+        cmd = ["find", base_dir, "-name", pattern, "-printf", "%h\\n"]
+    else:
+        cmd = ["find", base_dir, "-wholename", pattern]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        paths = result.stdout.strip().split('\n')
+        return paths[0] if paths and paths[0] else None
+    except Exception:
+        return None
+
+
+def _find_wholename(base_dir, pattern, use_printf_h=True):
+    """Find a file/directory using find command with -wholename."""
+    if use_printf_h:
+        cmd = ["find", base_dir, "-wholename", pattern, "-printf", "%h\\n"]
+    else:
+        cmd = ["find", base_dir, "-wholename", pattern]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        paths = result.stdout.strip().split('\n')
+        return paths[0] if paths and paths[0] else None
+    except Exception:
+        return None
+
+
+def _find_type_d_wholename(base_dir, pattern):
+    """Find a directory using find command with -type d -wholename."""
+    cmd = ["find", base_dir, "-type", "d", "-wholename", pattern]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        paths = result.stdout.strip().split('\n')
+        return paths[0] if paths and paths[0] else None
+    except Exception:
+        return None
+
+
+def _cleanup_asan():
+    """Restore libamdhip64.so on exit."""
+    global _TORCH_PATH, _LIBAMDHIP_MOVED
+    if _LIBAMDHIP_MOVED and _TORCH_PATH:
+        bck_path = os.path.join(_TORCH_PATH, "libamdhip64_bck.so")
+        orig_path = os.path.join(_TORCH_PATH, "libamdhip64.so")
+        if os.path.exists(bck_path):
+            shutil.move(bck_path, orig_path)
+            print(f"Restored {orig_path}")
+
+
+def setup_asan_environment():
+    """Set up ASAN environment variables and library paths."""
+    global _TORCH_PATH, _LIBAMDHIP_MOVED
+
+    # Set stack size limit (ulimit -s 1024)
+    resource.setrlimit(resource.RLIMIT_STACK, (1024 * 1024, resource.RLIM_INFINITY))
+
+    # Add llvm-symbolizer to PATH
+    home = os.path.expanduser("~")
+    symbolizer_dir = _find_path(os.path.join(home, ".triton/llvm"), "llvm-symbolizer")
+    if symbolizer_dir:
+        os.environ["PATH"] = f"{symbolizer_dir}:{os.environ.get('PATH', '')}"
+
+    # Find TORCH_PATH and set LD_LIBRARY_PATH
+    _TORCH_PATH = _find_path("/opt", "libcaffe2_nvrtc.so")
+    if _TORCH_PATH:
+        ld_library_path = os.environ.get("LD_LIBRARY_PATH", "")
+        os.environ["LD_LIBRARY_PATH"] = f"{ld_library_path}:{_TORCH_PATH}" if ld_library_path else _TORCH_PATH
+
+    # Register cleanup before moving the file
+    atexit.register(_cleanup_asan)
+
+    # Move libamdhip64.so to libamdhip64_bck.so
+    if _TORCH_PATH:
+        orig_path = os.path.join(_TORCH_PATH, "libamdhip64.so")
+        bck_path = os.path.join(_TORCH_PATH, "libamdhip64_bck.so")
+        if os.path.exists(orig_path):
+            shutil.move(orig_path, bck_path)
+            _LIBAMDHIP_MOVED = True
+            print(f"Moved {orig_path} to {bck_path}")
+
+    # Add ASAN library paths to LD_LIBRARY_PATH
+    clang_asan_dir = _find_path("/opt", "libclang_rt.asan-x86_64.so")
+    if clang_asan_dir:
+        os.environ["LD_LIBRARY_PATH"] = f"{clang_asan_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+
+    llvm_asan_dir = _find_type_d_wholename("/opt", "*lib/llvm/lib/asan")
+    if llvm_asan_dir:
+        os.environ["LD_LIBRARY_PATH"] = f"{llvm_asan_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+
+    hip_asan_dir = _find_wholename("/opt", "*lib/asan/libamdhip64.so")
+    if hip_asan_dir:
+        os.environ["LD_LIBRARY_PATH"] = f"{hip_asan_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+
+    # Find ASAN libraries for LD_PRELOAD
+    clang_asan_lib_result = subprocess.run(
+        ["find", "/opt", "-name", "libclang_rt.asan-x86_64.so"],
+        capture_output=True, text=True, timeout=30
+    )
+    clang_asan_lib = clang_asan_lib_result.stdout.strip().split('\n')[0] if clang_asan_lib_result.stdout.strip() else None
+
+    hip_asan_lib_result = subprocess.run(
+        ["find", "/opt", "-wholename", "*lib/asan/libamdhip64.so"],
+        capture_output=True, text=True, timeout=30
+    )
+    hip_asan_lib = hip_asan_lib_result.stdout.strip().split('\n')[0] if hip_asan_lib_result.stdout.strip() else None
+
+    os.environ["CLANG_ASAN_LIB"] = clang_asan_lib or ""
+    os.environ["HIP_ASAN_LIB"] = hip_asan_lib or ""
+
+    # Build LD_PRELOAD value
+    ld_preload_parts = []
+    if clang_asan_lib:
+        ld_preload_parts.append(clang_asan_lib)
+    if hip_asan_lib:
+        ld_preload_parts.append(hip_asan_lib)
+    os.environ["ASAN_LD_PRELOAD"] = ":".join(ld_preload_parts)
+
+    # Set ASAN_OPTIONS
+    os.environ["ASAN_OPTIONS"] = "detect_leaks=0,alloc_dealloc_mismatch=0"
+
+    print("ASAN environment setup complete")
+    print(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', '')[:100]}...")
+    print(f"  ASAN_LD_PRELOAD: {os.environ.get('ASAN_LD_PRELOAD', '')}")
 
 
 class AddressSanitizerRunner:
@@ -217,6 +350,10 @@ class AddressSanitizerRunner:
             env["AMD_PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
             env["AMDGCN_USE_BUFFER_OPS"] = "0"
         env.pop("PYTORCH_NO_CUDA_MEMORY_CACHING", None)
+
+        # Set LD_PRELOAD for ASAN libraries
+        if os.environ.get("ASAN_LD_PRELOAD"):
+            env["LD_PRELOAD"] = os.environ["ASAN_LD_PRELOAD"]
 
         # Add project root to PYTHONPATH
         if "PYTHONPATH" in env:
@@ -424,6 +561,10 @@ def main():
     if args.memory:
         print("Memory profiling: ENABLED")
     print("=" * 60)
+    print()
+
+    # Set up ASAN environment (library paths, LD_PRELOAD, etc.)
+    setup_asan_environment()
     print()
 
     runner = AddressSanitizerRunner(enable_memory=args.memory)
