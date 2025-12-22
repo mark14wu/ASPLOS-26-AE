@@ -75,7 +75,6 @@ dependencies = [
   "tomlkit==0.13.2",
   "toolz==1.0.0",
   "transformers==4.51.3",
-  "triton==3.4.0",
   "triton-viz",
   "typing-extensions==4.13.2",
   "typing-inspection==0.4.0",
@@ -91,9 +90,11 @@ dependencies = [
 [project.optional-dependencies]
 cuda = [
     "torch==2.8.0",
+    "triton==3.4.0",
 ]
 rocm = [
     "torch==2.8.0",
+    "triton",
 ]
 
 [build-system]
@@ -115,7 +116,8 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
-triton-viz = { path = "./submodules/triton-viz", editable=true}
+triton-viz = { path = "./submodules/triton-viz", editable = true }
+triton = { path = "./submodules/triton/python", editable = true, extra = "rocm" }
 torch = [
     { index = "pytorch-cuda", extra = "cuda" },
     { index = "pytorch-rocm", extra = "rocm" },

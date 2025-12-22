@@ -10,3 +10,6 @@
 [submodule "submodules/TritonBench"]
 	path = submodules/TritonBench
 	url = https://github.com/thunlp/TritonBench.git
+[submodule "submodules/triton"]
+	path = submodules/triton
+	url = https://github.com/triton-lang/triton.git
